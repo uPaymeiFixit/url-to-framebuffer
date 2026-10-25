@@ -73,7 +73,9 @@ supervise() {
 # another user and needs write access to it. XDG_RUNTIME_DIR itself is owned by that user
 # with mode 0700, so no one else can reach the socket.
 umask 000
-supervise weston weston --config=/etc/weston.ini --drm-device="$card" &
+# --socket is required: with WAYLAND_DISPLAY already set, Weston treats that name as a
+# parent compositor's socket and picks the next free one (wayland-1), which nothing waits for.
+supervise weston weston --config=/etc/weston.ini --drm-device="$card" --socket="$WAYLAND_DISPLAY" &
 wsup=$!
 
 n=0
