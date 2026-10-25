@@ -1,0 +1,63 @@
+name: url-to-framebuffer
+
+services:
+  kiosk:
+    build: .
+    image: url-to-framebuffer:local
+    # Only this process may restart the display; Docker's policy is the whole supervisor.
+    restart: unless-stopped
+    init: true
+    # The page can reach services on the host's own address (localhost, LAN).
+    network_mode: host
+
+    # The only devices the container can open: the display card and the two VT nodes.
+    # Never replace these with a /dev/dri or /dev bind mount, never add a GPU runtime.
+    # /dev/tty0 is for VT queries and switching; /dev/tty${VT} is the VT Weston draws on.
+    devices:
+      - ${DRM_DEVICE:-/dev/dri/card0}:${DRM_DEVICE:-/dev/dri/card0}
+      - /dev/tty0:/dev/tty0
+      - /dev/tty${VT:-7}:/dev/tty${VT:-7}
+
+    # SYS_TTY_CONFIG: VT_ACTIVATE and KDSETMODE (chvt, Weston's seat). Nothing else is
+    # known to be required; if Weston logs a DRM master permission error, see README.
+    cap_add:
+      - SYS_TTY_CONFIG
+    # Default capabilities that nothing here uses; with host networking NET_RAW would
+    # allow raw packets on the host's network.
+    cap_drop:
+      - NET_RAW
+      - MKNOD
+      - SETFCAP
+      - AUDIT_WRITE
+    security_opt:
+      - no-new-privileges:true
+
+    environment:
+      URL: ${URL:?set URL in .env}
+      DRM_DEVICE: ${DRM_DEVICE:-/dev/dri/card0}
+      VT: ${VT:-7}
+      CHROMIUM_EXTRA_ARGS: ${CHROMIUM_EXTRA_ARGS:-}
+
+    volumes:
+      # Local pages: URL=file:///pages/index.html
+      - ${PAGES_DIR:-/opt/url-to-framebuffer/pages}:/pages:ro
+    tmpfs:
+      # Wayland socket directory, owned by the unprivileged Chromium user.
+      - /run/xdg:mode=0700,uid=1000,gid=1000,size=16m
+      # Chromium profile and caches; counts against mem_limit.
+      - /tmp:mode=1777,uid=1000,gid=1000,size=${TMP_SIZE:-256m}
+    # Chromium's shared memory; Docker's default of 64m is too small for it.
+    shm_size: 256m
+
+    # Resource caps so the display cannot disturb other workloads.
+    cpus: ${CPUS:-2}
+    mem_limit: ${MEMORY_LIMIT:-1g}
+    memswap_limit: ${MEMORY_LIMIT:-1g}
+    # Counts threads; Chromium starts many.
+    pids_limit: ${PIDS_LIMIT:-1024}
+
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
