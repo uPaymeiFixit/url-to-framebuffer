@@ -13,8 +13,21 @@ services:
     # The only devices the container can open: the display card and the two VT nodes.
     # Never replace these with a /dev/dri or /dev bind mount, never add a GPU runtime.
     # /dev/tty0 is for VT queries and switching; /dev/tty${VT} is the VT Weston draws on.
+    #
+    # The card is always presented as /dev/dri/display-card; entrypoint.sh checks its
+    # kernel driver (refusing nvidia) and links /dev/dri/cardN to it for Weston.
+    # Long syntax because by-path names contain colons. DRM_DEVICE may be a symlink such
+    # as /dev/dri/by-path/pci-0000:03:00.0-card: Docker resolves a symlink host path
+    # (filepath.EvalSymlinks in moby's oci.DevicesFromPath, called from createSpec during
+    # container start) on every start, including restart-policy restarts and the start
+    # after a reboot, so a by-path name follows the same physical card. It is not
+    # resolved once at create time. A plain /dev/dri/cardN name follows the kernel's
+    # probe order and can point at a different card after a reboot; entrypoint.sh
+    # refuses an nvidia card on every start either way.
     devices:
-      - ${DRM_DEVICE:-/dev/dri/card0}:${DRM_DEVICE:-/dev/dri/card0}
+      - source: ${DRM_DEVICE:-/dev/dri/card0}
+        target: /dev/dri/display-card
+        permissions: rwm
       - /dev/tty0:/dev/tty0
       - /dev/tty${VT:-7}:/dev/tty${VT:-7}
 

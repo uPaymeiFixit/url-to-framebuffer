@@ -4,11 +4,40 @@
 set -eu
 
 URL=${URL:?URL is not set}
-DRM_DEVICE=${DRM_DEVICE:-/dev/dri/card0}
+DRM_DEVICE=${DRM_DEVICE:-/dev/dri/card0} # host path, for messages only
 VT=${VT:-7}
-card=${DRM_DEVICE##*/}
+# Overridable only so tests can use a fake sysfs and device node.
+SYSFS_ROOT=${SYSFS_ROOT:-/sys}
+CARD_NODE=${CARD_NODE:-/dev/dri/display-card}
+CARD_LINK_DIR=${CARD_LINK_DIR:-/dev/dri}
 
 log() { printf 'entrypoint: %s\n' "$*"; }
+
+# Before anything opens the card: never touch a GPU that belongs to VM tenants. cardN
+# numbers can change at reboot, and Docker restarts this container without install.sh's
+# check, so identify the card by device number on every start. If it is an nvidia card, or
+# its driver cannot be read, sleep (not exit, which would loop through restarts) and never
+# open the node. stat reads the inode only; it does not open the device.
+refuse() {
+  log "REFUSING to use $DRM_DEVICE: $*"
+  log "Not opening it. Set DRM_DEVICE to the display card (prefer /dev/dri/by-path/...-card) and run: docker compose up -d"
+  exec sleep infinity
+}
+[ -e "$CARD_NODE" ] || refuse "no device node at $CARD_NODE"
+devnum=$(stat -c '%t:%T' "$CARD_NODE") || refuse "cannot stat $CARD_NODE"
+sysdev=$SYSFS_ROOT/dev/char/$((0x${devnum%%:*})):$((0x${devnum##*:}))
+[ -e "$sysdev/device/driver" ] || refuse "cannot read its kernel driver ($sysdev/device/driver)"
+driver=$(basename "$(readlink -f "$sysdev/device/driver")")
+[ "$driver" != nvidia ] || refuse "kernel driver is nvidia"
+card=$(basename "$(readlink -f "$sysdev")")
+case $card in
+  card[0-9]*) ;;
+  *) refuse "device is not a display card ($card)" ;;
+esac
+log "display card $card (host path $DRM_DEVICE), kernel driver $driver"
+# Weston and libseat open the udev node name /dev/dri/cardN; libseat resolves symlinks and
+# accepts any path under /dev/dri/.
+ln -sf "${CARD_NODE##*/}" "$CARD_LINK_DIR/$card"
 
 # libseat's built-in backend: Weston opens the VT and DRM device itself (no logind or seatd).
 export LIBSEAT_BACKEND=builtin

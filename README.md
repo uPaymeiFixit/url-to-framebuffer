@@ -18,12 +18,21 @@ virtual terminal. It never sees `/dev/dri` as a whole, other GPUs, render nodes 
 compute GPUs: opening an NVIDIA device node holds the GPU and breaks VFIO handover to VM
 tenants, so `install.sh` refuses any card driven by `nvidia`.
 
+`cardN` numbers follow driver probe order and can change at reboot, so use the stable name
+`DRM_DEVICE=/dev/dri/by-path/pci-<domain:bus:dev.fn>-card`; `install.sh` prints it for the
+card you chose. Docker resolves that symlink each time the container starts, so it follows
+the same physical card. Independently, the container checks the card's kernel driver (from
+its device number, via `/sys/dev/char`) on every start before anything opens it. If the
+driver is `nvidia` or cannot be read, it logs `REFUSING to use ...` and sleeps instead of
+restarting, so a renumbered card can never be opened.
+
 ## Requirements
 
 - Linux with a KMS display device (`/dev/dri/cardN`) that is not an NVIDIA GPU. First
   deployment target: Ubuntu 22.04 with an ASPEED BMC VGA (`ast` driver, `/dev/dri/card0`,
   1920x1080).
-- Docker 24+ with Compose v2 (`docker compose`).
+- Docker 24+ with a recent Compose v2 (`docker compose`; long-syntax `devices`, which
+  `install.sh` exercises when it validates the file).
 - Root, to install and to give the container the devices.
 - Nothing else may hold the display card: no X server, no other Wayland compositor.
 - Network access at build time (Debian snapshot archive and the Docker Hub base image).
@@ -60,7 +69,7 @@ Set in `/opt/url-to-framebuffer/.env`; see `.env.example`.
 | Variable | Default | Meaning |
 |---|---|---|
 | `URL` | required | Page to show |
-| `DRM_DEVICE` | `/dev/dri/card0` | Display card; `install.sh` refuses `nvidia` and unreadable drivers |
+| `DRM_DEVICE` | `/dev/dri/card0` | Display card, preferably a `/dev/dri/by-path/...-card` name; `install.sh` and the container refuse `nvidia` and unreadable drivers |
 | `VT` | `7` | Virtual terminal to draw on; pick one with no login prompt |
 | `PAGES_DIR` | `/opt/url-to-framebuffer/pages` | Host directory mounted read-only at `/pages` |
 | `CPUS` | `2` | CPU cap |
@@ -104,6 +113,7 @@ Logs: `cd /opt/url-to-framebuffer && sudo docker compose logs -f`.
 | `libseat: could not open seat`, `Could not open terminal for VT`, `cannot switch to VT` | The container cannot use the VT. Check `/dev/tty<VT>` exists and that the VT is not a login console held by something else; try another `VT`. |
 | `Could not make device fd drm master: Device or resource busy` (or `ERROR: could not open DRM device`) | Something else holds the display card: an X server, another compositor, or a leftover container. Stop it (`fuser -v /dev/dri/card0` on the host shows holders). |
 | `Could not make device fd drm master: Permission denied` | Unprivileged DRM master was refused. As a last resort add `SYS_ADMIN` to `cap_add` in `compose.yaml`; this widens the container, so prefer finding the other holder first. |
+| `REFUSING to use ...` (container idles, no restart loop) | `DRM_DEVICE` now points at an nvidia card or one whose driver is unreadable (usually card numbers changed). Run `sudo ./install.sh` to see the card and its by-path name, set `DRM_DEVICE` to it, then `docker compose up -d`. |
 | `no drm device found`, `Failed to create heads` | Wrong `DRM_DEVICE`, or no monitor detected on the card. List cards with `ls /sys/class/drm`. |
 | `failed to create kms fb`, `is not compatible with dumb buffers` | The driver rejects the default pixel format for software rendering. Uncomment `gbm-format=rgb565` in `weston.ini` (or try another format your driver supports) and re-run `install.sh`. |
 | Chromium: `No usable sandbox`, `Failed to move to new namespace` | Only if you removed `--no-sandbox` in `entrypoint.sh`; see the section above. |

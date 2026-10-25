@@ -32,4 +32,12 @@ if grep -nE '^[[:space:]]*(privileged:|runtime:|gpus:)|-[[:space:]]*/dev(/dri)?:
   echo "lint.sh: compose.yaml exposes more than the display card and VT nodes" >&2
   exit 1
 fi
+# The card must come from DRM_DEVICE only, and both layers must keep the nvidia refusal.
+if grep -nE '^[[:space:]]*-?[[:space:]]*source:' compose.yaml | grep -v 'DRM_DEVICE\|/dev/tty'; then
+  echo "lint.sh: compose.yaml has a device source other than DRM_DEVICE and the VT nodes" >&2
+  exit 1
+fi
+for f in entrypoint.sh install.sh; do
+  grep -q 'nvidia' "$f" || { echo "lint.sh: $f lost its nvidia check" >&2; exit 1; }
+done
 echo "device guard: ok"

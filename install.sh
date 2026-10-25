@@ -80,17 +80,30 @@ VT=$(get_var VT)
 
 # Only a display card may be given to the container. Opening an NVIDIA node makes the
 # container hold the GPU, which breaks VFIO handover to VM tenants.
-case $DRM_DEVICE in
-  /dev/dri/card[0-9] | /dev/dri/card[0-9][0-9]) ;;
-  *) die "DRM_DEVICE must look like /dev/dri/cardN, got: $DRM_DEVICE" ;;
+# The card is identified by its device number (major:minor) through /sys/dev/char, not by
+# its name: cardN numbers follow driver probe order and can change at reboot.
+real=$(readlink -f "$DRM_DEVICE" 2>/dev/null || true)
+case $real in
+  /dev/dri/card[0-9]*) ;;
+  *) die "DRM_DEVICE must be a display card (/dev/dri/cardN or a /dev/dri/by-path/*-card link), got: $DRM_DEVICE" ;;
 esac
-[ -c "$DRM_DEVICE" ] || die "$DRM_DEVICE is not a character device"
-card=${DRM_DEVICE##*/}
-link=/sys/class/drm/$card/device/driver
+[ -c "$real" ] || die "$real is not a character device"
+devnum=$(stat -c '%t:%T' "$real")
+link=/sys/dev/char/$((0x${devnum%%:*})):$((0x${devnum##*:}))/device/driver
 [ -e "$link" ] || die "cannot read the kernel driver of $DRM_DEVICE ($link); refusing it"
 driver=$(basename "$(readlink -f "$link")")
-[ "$driver" != nvidia ] || die "$DRM_DEVICE uses the nvidia driver; refusing it (pick the display-only card)"
-printf '%s uses kernel driver: %s\n' "$DRM_DEVICE" "$driver"
+[ "$driver" != nvidia ] || die "$DRM_DEVICE ($real) uses the nvidia driver; refusing it (pick the display-only card)"
+printf '%s is %s, kernel driver: %s\n' "$DRM_DEVICE" "$real" "$driver"
+
+stable=
+for l in /dev/dri/by-path/*-card; do
+  if [ -e "$l" ] && [ "$(readlink -f "$l")" = "$real" ]; then stable=$l; fi
+done
+if [ -n "$stable" ]; then
+  printf 'Stable path for this card: %s\n' "$stable"
+  [ "$DRM_DEVICE" = "$stable" ] ||
+    printf 'Card numbers can change at reboot. To pin this card: sudo %s --drm-device %s\n' "$0" "$stable"
+fi
 
 case $VT in
   '' | *[!0-9]*) die "VT must be a number, got: $VT" ;;
