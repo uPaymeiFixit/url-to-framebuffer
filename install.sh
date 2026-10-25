@@ -108,7 +108,7 @@ fi
 case $VT in
   '' | *[!0-9]*) die "VT must be a number, got: $VT" ;;
 esac
-[ "$VT" -ge 1 ] && [ "$VT" -le 63 ] || die "VT must be between 1 and 63"
+if [ "$VT" -lt 1 ] || [ "$VT" -gt 63 ]; then die "VT must be between 1 and 63"; fi
 [ -c "/dev/tty$VT" ] || die "/dev/tty$VT does not exist"
 
 cd "$DEST"
